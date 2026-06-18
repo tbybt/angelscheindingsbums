@@ -266,9 +266,24 @@ function showQuiz() {
   renderQuestion(); renderStats(); renderResults();
 }
 
-function answeredCount() { return state ? state.qs.filter(q=>q.selected!==null && q.selected!==undefined).length : 0; }
-function correctCount() { return state ? state.qs.filter(q=>q.selected && q.selected.correct).length : 0; }
-function wrongCount() { return state ? state.qs.filter(q=>q.selected && !q.selected.correct).length : 0; }
+function isCommitted(q) { return !!(q && q.committedAt); }
+function answeredCount() { return state ? state.qs.filter(q=>isCommitted(q)).length : 0; }
+function correctCount() { return state ? state.qs.filter(q=>isCommitted(q) && q.selected && q.selected.correct).length : 0; }
+function wrongCount() { return state ? state.qs.filter(q=>isCommitted(q) && q.selected && !q.selected.correct).length : 0; }
+
+function commitQuestion(q) {
+  if (!q || !q.selected || q.committedAt) return false;
+  q.committedAt = nowIso();
+  state.answeredEvents = (state.answeredEvents || 0) + 1;
+  state.lastQuestionId = idOf(q);
+  registerAnswer(q, !!q.selected.correct);
+  return true;
+}
+
+function commitCurrentQuestion() {
+  if (!state || !state.qs || !state.qs.length) return false;
+  return commitQuestion(state.qs[state.current]);
+}
 
 function renderStats() {
   if(!state) return;
@@ -330,16 +345,14 @@ function renderQuestion() {
 }
 
 function chooseAnswer(q, a) {
-  // Count only the first answer for a displayed question.
+  // The selected answer is only committed when you press Weiter, Auswerten, or leave the question.
+  // This prevents the top overview/statistics from revealing the correct answer while trying A/B/C.
   if (!q.selected) {
     q.selected = {text:a.text, correct:a.correct, answeredAt:nowIso()};
-    state.answeredEvents = (state.answeredEvents || 0) + 1;
-    state.lastQuestionId = idOf(q);
-    registerAnswer(q, a.correct);
   } else {
     q.selected = {text:a.text, correct:a.correct, answeredAt:q.selected.answeredAt, changed:true};
   }
-  save(); renderQuestion(); renderStats(); renderResults();
+  save(); renderQuestion();
 }
 
 function refreshWeakPassIfNeeded() {
@@ -358,16 +371,19 @@ function refreshWeakPassIfNeeded() {
 }
 function goto(delta) {
   if (!state) return;
+  commitCurrentQuestion();
   if (delta > 0 && state.weakDrill && state.current >= state.qs.length-1) {
     if (refreshWeakPassIfNeeded()) return;
   }
   state.current = Math.max(0, Math.min(state.qs.length-1, state.current + delta));
-  save(); renderQuestion(); renderStats();
+  save(); renderQuestion(); renderStats(); renderResults();
 }
-function wrongQuestions() { return state.qs.filter(q => !q.selected || !q.selected.correct); }
+function wrongQuestions() { return state.qs.filter(q => !isCommitted(q) || !q.selected || !q.selected.correct); }
 
 function renderResults() {
   if(!state) return;
+  const committedNow = commitCurrentQuestion();
+  if (committedNow) save();
   const onlyWrong = document.getElementById('onlyWrong').checked;
   const rows = onlyWrong ? wrongQuestions() : state.qs;
   const answered = answeredCount();
@@ -379,7 +395,7 @@ function renderResults() {
   const tb = tbl.querySelector('tbody');
   rows.forEach(q => {
     const tr = document.createElement('tr');
-    const status = !q.selected ? 'unbeantwortet' : (q.selected.correct ? 'richtig' : 'falsch');
+    const status = !isCommitted(q) || !q.selected ? 'unbeantwortet' : (q.selected.correct ? 'richtig' : 'falsch');
     tr.className = status==='falsch' || status==='unbeantwortet' ? 'wrongrow' : 'correctrow';
     const mst = masteryStreak(idOf(q));
     const minfo = masteryInfo(idOf(q));
@@ -434,20 +450,20 @@ function init() {
   document.getElementById('prevBtn').onclick = () => goto(-1);
   document.getElementById('nextBtn').onclick = () => goto(1);
   document.getElementById('pauseBtn').onclick = () => { save(); alert('Gespeichert. Du kannst spaeter "Gespeicherte Runde fortsetzen" druecken.'); };
-  document.getElementById('evalBtn').onclick = () => { renderResults(); document.getElementById('results').scrollIntoView({behavior:'smooth'}); };
+  document.getElementById('evalBtn').onclick = () => { renderResults(); renderStats(); document.getElementById('results').scrollIntoView({behavior:'smooth'}); };
   document.getElementById('wrongBtn').onclick = startWrongRound;
   document.getElementById('repeatWrongBtn').onclick = startWrongRound;
   document.getElementById('startSavedWrongBtn').onclick = startSavedWrongRound;
   document.getElementById('clearWrongMemoryBtn').onclick = () => { if(confirm('Dauerhafte Fehlerliste wirklich loeschen?')) { localStorage.removeItem(MASTERY_KEY); renderStats(); renderResults(); alert('Fehlerliste geloescht.'); } };
-  document.getElementById('refreshResults').onclick = renderResults;
-  document.getElementById('onlyWrong').onchange = renderResults;
+  document.getElementById('refreshResults').onclick = () => { renderResults(); renderStats(); };
+  document.getElementById('onlyWrong').onchange = () => { renderResults(); renderStats(); };
   document.getElementById('exportBtn').onclick = exportResults;
   document.addEventListener('keydown', (e) => {
     if(!state || document.activeElement.tagName === 'SELECT' || document.activeElement.tagName === 'INPUT') return;
     const q = state.qs[state.current];
     if(['1','2','3'].includes(e.key)) { const i=Number(e.key)-1; if(q.answers[i]) chooseAnswer(q, q.answers[i]); }
     if(e.key === 'Enter') goto(1);
-    if(e.key.toLowerCase() === 'a') { renderResults(); document.getElementById('results').scrollIntoView({behavior:'smooth'}); }
+    if(e.key.toLowerCase() === 'a') { renderResults(); renderStats(); document.getElementById('results').scrollIntoView({behavior:'smooth'}); }
     if(e.key.toLowerCase() === 'r') { state = newState(); save(); showQuiz(); }
   });
   if(localStorage.getItem(STORAGE_KEY)) document.getElementById('resumeBtn').classList.add('primary');
