@@ -45,6 +45,13 @@ tr.wrongrow { background:#fff7f7; }
 tr.correctrow { background:#f8fff9; }
 .resultbox { max-height:500px; overflow:auto; border:1px solid var(--line); border-radius:12px; }
 .notice { background:#fffbeb; border:1px solid #fde68a; color:#713f12; border-radius:12px; padding:10px 12px; }
+.fieldblock { display:flex; flex-direction:column; gap:6px; min-width:260px; }
+.fieldtitle { font-weight:700; }
+.checkboxgrid { display:grid; grid-template-columns:repeat(2, minmax(180px, 1fr)); gap:6px 12px; padding:8px; border:1px solid var(--line); border-radius:10px; background:#fafbfc; }
+.checkboxgrid label { display:flex; align-items:flex-start; gap:6px; font-size:13px; line-height:1.25; }
+.minirow { display:flex; gap:8px; flex-wrap:wrap; }
+.smallbtn { padding:6px 10px; font-size:12px; }
+@media (max-width:800px) { .checkboxgrid { grid-template-columns:1fr; } }
 @media (max-width:800px) { .statgrid { grid-template-columns:repeat(2, 1fr); } .question { font-size:19px; } header { position:static; } th { position:static; } }
 </style>
 </head>
@@ -58,9 +65,15 @@ tr.correctrow { background:#f8fff9; }
     <h2>Start</h2>
     <p class="small">Datenbasis: sichtbarer Brandenburg-Fragenkatalog aus deiner Datei. Enthalten: <b id="totalCount"></b> Fragenzeilen. Im offiziellen PDF fehlt/überspringt die Nummerierung an einzelnen Stellen; die App nutzt die sichtbaren Fragen.</p>
     <div class="row">
-      <label>Sachgebiet:
-        <select id="categoryFilter"><option value="ALL">Alle Sachgebiete</option></select>
-      </label>
+      <div class="fieldblock subjectbox">
+        <div class="fieldtitle">Sachgebiete:</div>
+        <div class="small">Mehrere auswaehlen moeglich. Keine Auswahl = alle Sachgebiete.</div>
+        <div id="categoryFilter" class="checkboxgrid"></div>
+        <div class="minirow">
+          <button type="button" class="secondary smallbtn" id="selectAllCats">Alle</button>
+          <button type="button" class="secondary smallbtn" id="clearCats">Keine</button>
+        </div>
+      </div>
       <label>Modus:
         <select id="mode">
           <option value="all">Alle passenden Fragen, komplett zufällig</option>
@@ -199,9 +212,18 @@ function setStatus(msg) {
   if (fb) fb.textContent = msg;
 }
 
+function selectedCategories() {
+  const boxes = [...document.querySelectorAll('#categoryFilter input[type=checkbox]')];
+  return boxes.filter(b => b.checked).map(b => b.value);
+}
+
+function categoryMatches(q, cats) {
+  return !cats.length || cats.includes(q.sg);
+}
+
 function activeQuestionsByMode() {
-  const cat = document.getElementById('categoryFilter').value;
-  let base = QUESTIONS.filter(q => cat==='ALL' || q.sg === cat);
+  const cats = selectedCategories();
+  let base = QUESTIONS.filter(q => categoryMatches(q, cats));
   const mode = document.getElementById('mode').value;
   if (mode === 'weak') {
     const set = new Set(masteryIds());
@@ -213,9 +235,9 @@ function activeQuestionsByMode() {
 }
 
 function buildWeakQueue(previousId) {
-  const cat = document.getElementById('categoryFilter').value;
+  const cats = selectedCategories();
   const m = loadMastery();
-  let active = QUESTIONS.filter(q => (cat==='ALL' || q.sg === cat) && m[idOf(q)]);
+  let active = QUESTIONS.filter(q => categoryMatches(q, cats) && m[idOf(q)]);
   if (!active.length) return [];
   // Weighted-but-still-random: low streak and high wrong count appear earlier, but every active error appears once per pass.
   active = active.map(q => {
@@ -247,6 +269,7 @@ function newState() {
     current:0,
     startedAt:nowIso(),
     instant:document.getElementById('instantFeedback').checked,
+    categories:selectedCategories(),
     mode: mode,
     weakDrill: drill,
     answeredEvents:0,
@@ -382,8 +405,7 @@ function wrongQuestions() { return state.qs.filter(q => !isCommitted(q) || !q.se
 
 function renderResults() {
   if(!state) return;
-  const committedNow = commitCurrentQuestion();
-  if (committedNow) save();
+  commitCurrentQuestion();
   const onlyWrong = document.getElementById('onlyWrong').checked;
   const rows = onlyWrong ? wrongQuestions() : state.qs;
   const answered = answeredCount();
@@ -440,8 +462,15 @@ function renderPersistentSummary() {
 function init() {
   document.getElementById('totalCount').textContent = QUESTIONS.length;
   const cats = [...new Map(QUESTIONS.map(q => [q.sg, q.sg + ' - ' + q.sachgebiet])).entries()];
-  const sel = document.getElementById('categoryFilter');
-  cats.forEach(([k,v]) => { const o=document.createElement('option'); o.value=k; o.textContent=v; sel.appendChild(o); });
+  const catBox = document.getElementById('categoryFilter');
+  cats.forEach(([k,v]) => {
+    const lab=document.createElement('label');
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.value=k; cb.checked=true;
+    lab.appendChild(cb); lab.appendChild(document.createTextNode(v));
+    catBox.appendChild(lab);
+  });
+  document.getElementById('selectAllCats').onclick = () => { document.querySelectorAll('#categoryFilter input[type=checkbox]').forEach(b => b.checked = true); };
+  document.getElementById('clearCats').onclick = () => { document.querySelectorAll('#categoryFilter input[type=checkbox]').forEach(b => b.checked = false); };
   const modeSel = document.getElementById('mode');
   modeSel.title = 'Fehlertraining mischt aktive Fehlerfragen zufaellig und zeigt dieselbe Frage moeglichst nicht direkt nochmal.';
   document.getElementById('startBtn').onclick = () => { state = newState(); if(!state.qs.length) return alert('Keine Fragen fuer diese Auswahl. ' + renderPersistentSummary()); save(); showQuiz(); };
